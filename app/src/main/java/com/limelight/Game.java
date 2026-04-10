@@ -50,8 +50,10 @@ import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.graphics.Bitmap;
 import android.graphics.Point;
 import android.graphics.Rect;
+import android.graphics.SurfaceTexture;
 import android.hardware.input.InputManager;
 import android.media.AudioManager;
 import android.net.ConnectivityManager;
@@ -59,6 +61,7 @@ import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.IBinder;
 import android.util.Rational;
 import android.view.Display;
@@ -66,8 +69,10 @@ import android.view.InputDevice;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.PixelCopy;
 import android.view.Surface;
 import android.view.SurfaceHolder;
+import android.view.TextureView;
 import android.view.View;
 import android.view.View.OnGenericMotionListener;
 import android.view.View.OnSystemUiVisibilityChangeListener;
@@ -76,6 +81,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.view.inputmethod.InputMethodManager;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -86,6 +92,7 @@ import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 
 public class Game extends Activity implements SurfaceHolder.Callback,
@@ -136,7 +143,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private boolean cursorVisible = false;
     private boolean waitingForAllModifiersUp = false;
     private int specialKeyCode = KeyEvent.KEYCODE_UNKNOWN;
-    private StreamView streamView;
+    //private StreamView streamView;
+    private ImageView streamCopyView;
+    private TextureView streamView;
     private long lastAbsTouchUpTime = 0;
     private long lastAbsTouchDownTime = 0;
     private float lastAbsTouchUpX, lastAbsTouchUpY;
@@ -169,6 +178,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             connectedToUsbDriverService = false;
         }
     };
+
+    // Needed to manage copy to renderCopyView
+    private HandlerThread copyThread;
+    private Handler copyHandler;
+    private Bitmap reusableBitmap;
+    private AtomicBoolean isCopying = new AtomicBoolean(false);
 
     public static final String EXTRA_HOST = "Host";
     public static final String EXTRA_PORT = "Port";
@@ -237,17 +252,22 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         // Listen for non-touch events on the game surface
         streamView = findViewById(R.id.surfaceView);
-        streamView.setOnGenericMotionListener(this);
-        streamView.setOnKeyListener(this);
-        streamView.setInputCallbacks(this);
+        // Commented this because of personal preference
+        // streamView.setOnGenericMotionListener(this);
+        // streamView.setOnKeyListener(this);
+        //streamView.setInputCallbacks(this);
+
+        // Create the stream copy view
+        streamCopyView = findViewById(R.id.imageView);
 
         // Listen for touch events on the background touch view to enable trackpad mode
         // to work on areas outside of the StreamView itself. We use a separate View
         // for this rather than just handling it at the Activity level, because that
         // allows proper touch splitting, which the OSC relies upon.
-        View backgroundTouchView = findViewById(R.id.backgroundTouchView);
-        backgroundTouchView.setOnTouchListener(this);
+        // View backgroundTouchView = findViewById(R.id.backgroundTouchView);
+        // backgroundTouchView.setOnTouchListener(this);
 
+        /*
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             // Request unbuffered input event dispatching for all input classes we handle here.
             // Without this, input events are buffered to be delivered in lock-step with VBlank,
@@ -267,6 +287,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     InputDevice.SOURCE_CLASS_TRACKBALL // Mice (pointer capture)
             );
         }
+        */
 
         notificationOverlayView = findViewById(R.id.notificationOverlay);
 
@@ -274,6 +295,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         inputCaptureProvider = InputCaptureManager.getInputCaptureProvider(this, this);
 
+        /*
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             streamView.setOnCapturedPointerListener(new View.OnCapturedPointerListener() {
                 @Override
@@ -282,6 +304,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 }
             });
         }
+        */
 
         // Warn the user if they're on a metered connection
         ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -493,6 +516,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         inputManager.registerInputDeviceListener(keyboardTranslator, null);
 
         // Initialize touch contexts
+        /*
         for (int i = 0; i < touchContextMap.length; i++) {
             if (!prefConfig.touchscreenTrackpad) {
                 touchContextMap[i] = new AbsoluteTouchContext(conn, i, streamView);
@@ -503,6 +527,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         streamView, prefConfig);
             }
         }
+        */
 
         if (prefConfig.onscreenController) {
             // create virtual onscreen controller
@@ -531,8 +556,131 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             return;
         }
 
+        // Manage SurfaceView rendering events
+        streamView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+            @Override
+            public void onSurfaceTextureAvailable(SurfaceTexture surfaceTexture, int i, int i1) {
+                LimeLog.info("Surface Texture available");
+
+                float desiredFrameRate;
+
+                surfaceCreated = true;
+
+                // Android will pick the lowest matching refresh rate for a given frame rate value, so we want
+                // to report the true FPS value if refresh rate reduction is enabled. We also report the true
+                // FPS value if there's no suitable matching refresh rate. In that case, Android could try to
+                // select a lower refresh rate that avoids uneven pull-down (ex: 30 Hz for a 60 FPS stream on
+                // a display that maxes out at 50 Hz).
+                if (mayReduceRefreshRate() || desiredRefreshRate < prefConfig.fps) {
+                    desiredFrameRate = prefConfig.fps;
+                }
+                else {
+                    // Otherwise, we will pretend that our frame rate matches the refresh rate we picked in
+                    // prepareDisplayForRendering(). This will usually be the highest refresh rate that our
+                    // frame rate evenly divides into, which ensures the lowest possible display latency.
+                    desiredFrameRate = desiredRefreshRate;
+                }
+
+                // Tell the OS about our frame rate to allow it to adapt the display refresh rate appropriately
+                /*if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    // We want to change frame rate even if it's not seamless, since prepareDisplayForRendering()
+                    // will not set the display mode on S+ if it only differs by the refresh rate. It depends
+                    // on us to trigger the frame rate switch here.
+                    holder.getSurface().setFrameRate(desiredFrameRate,
+                            Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
+                            Surface.CHANGE_FRAME_RATE_ALWAYS);
+                }
+                else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    holder.getSurface().setFrameRate(desiredFrameRate,
+                            Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
+                }*/
+
+
+                if (!surfaceCreated) {
+                    throw new IllegalStateException("Surface changed before creation!");
+                }
+
+                if (!attemptedConnection) {
+                    attemptedConnection = true;
+
+                    // Initialize the background thread for PixelCopy
+                    copyThread = new HandlerThread("PixelCopyManager");
+                    copyThread.start();
+                    copyHandler = new Handler(copyThread.getLooper());
+
+                    // Update GameManager state to indicate we're "loading" while connecting
+                    UiHelper.notifyStreamConnecting(Game.this);
+
+
+                    //decoderRenderer.setRenderTarget(holder);
+                    decoderRenderer.setSurfaceTexture(surfaceTexture);
+                    conn.start(new AndroidAudioRenderer(Game.this, prefConfig.enableAudioFx),
+                            decoderRenderer, Game.this);
+                }
+            }
+
+            @Override
+            public void onSurfaceTextureSizeChanged(SurfaceTexture surfaceTexture, int i, int i1) {
+
+            }
+
+            @Override
+            public boolean onSurfaceTextureDestroyed(SurfaceTexture surfaceTexture) {
+                LimeLog.info("Surface Texture destroyed");
+
+                if (!surfaceCreated) {
+                    throw new IllegalStateException("Surface destroyed before creation!");
+                }
+
+                if (attemptedConnection) {
+                    // Let the decoder know immediately that the surface is gone
+                    decoderRenderer.prepareForStop();
+
+                    copyThread.quitSafely();
+                    if (reusableBitmap != null) reusableBitmap.recycle();
+
+                    if (connected) {
+                        stopConnection();
+                    }
+                }
+                return true;
+            }
+
+            @Override
+            public void onSurfaceTextureUpdated(SurfaceTexture surfaceTexture) {
+                //LimeLog.info("Surface Texture updated");
+                if (isCopying.get()) return; // Prevent overlapping requests if copy takes longer than frame rate
+                isCopying.set(true);
+
+                if (reusableBitmap == null) {
+                    reusableBitmap = Bitmap.createBitmap(streamView.getWidth(), streamView.getHeight(), Bitmap.Config.ARGB_8888);
+                }
+
+                int[] location = new int[2];
+                streamView.getLocationInWindow(location);
+                Rect srcRect = new Rect(location[0], location[1],
+                        location[0] + streamView.getWidth(),
+                        location[1] + streamView.getHeight());
+
+                Window window = Game.this.getWindow();
+
+                /*
+                If your TextureView is inside a scrolling list (like a RecyclerView) or a moving container, the locationInWindow can change between the moment you calculate the Rect and the moment the GPU actually performs the copy.
+                To make it bulletproof:
+                Check for isAttachedToWindow(): Always ensure the view is still attached before calling PixelCopy.
+                Use getGlobalVisibleRect: If the view is partially off-screen, getGlobalVisibleRect is safer than getLocationInWindow as it accounts for clipping by the parent.
+                 */
+                PixelCopy.request(window, srcRect, reusableBitmap, (copyResult) -> {
+                    if (copyResult == PixelCopy.SUCCESS) {
+                        streamCopyView.post(() -> streamCopyView.setImageBitmap(reusableBitmap));
+                    }
+                    isCopying.set(false);
+                }, copyHandler);
+            }
+        });
+
         // The connection will be started when the surface gets created
-        streamView.getHolder().addCallback(this);
+        // streamView.getHolder().addCallback(this);
     }
 
     private void setPreferredOrientationForCurrentDisplay() {
@@ -945,11 +1093,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         if (prefConfig.stretchVideo || aspectRatioMatch) {
             // Set the surface to the size of the video
-            streamView.getHolder().setFixedSize(prefConfig.width, prefConfig.height);
+            // streamView.getHolder().setFixedSize(prefConfig.width, prefConfig.height);
         }
         else {
             // Set the surface to scale based on the aspect ratio of the stream
-            streamView.setDesiredAspectRatio((double)prefConfig.width / (double)prefConfig.height);
+            // streamView.setDesiredAspectRatio((double)prefConfig.width / (double)prefConfig.height);
         }
 
         // Set the desired refresh rate that will get passed into setFrameRate() later
@@ -2115,8 +2263,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public boolean onGenericMotionEvent(MotionEvent event) {
-        return handleMotionEvent(null, event) || super.onGenericMotionEvent(event);
-
+        //return handleMotionEvent(null, event) || super.onGenericMotionEvent(event);
+        return false;
     }
 
     private void updateMousePosition(View touchedView, MotionEvent event) {
@@ -2174,7 +2322,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public boolean onGenericMotion(View view, MotionEvent event) {
-        return handleMotionEvent(view, event);
+        // return handleMotionEvent(view, event);
+        return false;
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -2187,7 +2336,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             view.requestUnbufferedDispatch(event);
         }
 
-        return handleMotionEvent(view, event);
+        // return handleMotionEvent(view, event);
+        return false;
     }
 
     @Override
@@ -2248,9 +2398,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     LimeLog.severe(stage + " failed: " + errorCode);
 
                     // If video initialization failed and the surface is still valid, display extra information for the user
-                    if (stage.contains("video") && streamView.getHolder().getSurface().isValid()) {
-                        Toast.makeText(Game.this, getResources().getText(R.string.video_decoder_init_failed), Toast.LENGTH_LONG).show();
-                    }
+                    // if (stage.contains("video") && streamView.getHolder().getSurface().isValid()) {
+                    //    Toast.makeText(Game.this, getResources().getText(R.string.video_decoder_init_failed), Toast.LENGTH_LONG).show();
+                    // }
 
                     String dialogText = getResources().getString(R.string.conn_error_msg) + " " + stage +" (error "+errorCode+")";
 
