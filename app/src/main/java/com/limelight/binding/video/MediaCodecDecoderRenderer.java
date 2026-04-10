@@ -23,6 +23,7 @@ import com.limelight.preferences.PreferenceConfiguration;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.Context;
+import android.graphics.SurfaceTexture;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
@@ -35,6 +36,7 @@ import android.os.Process;
 import android.os.SystemClock;
 import android.util.Range;
 import android.view.Choreographer;
+import android.view.Surface;
 import android.view.SurfaceHolder;
 
 public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements Choreographer.FrameCallback {
@@ -71,6 +73,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private int initialWidth, initialHeight;
     private int videoFormat;
     private SurfaceHolder renderTarget;
+    private SurfaceTexture renderSurfaceTexture;
+    private Surface renderSurface;
     private volatile boolean stopping;
     private CrashListener crashListener;
     private boolean reportedCrash;
@@ -292,6 +296,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     public void setRenderTarget(SurfaceHolder renderTarget) {
         this.renderTarget = renderTarget;
+    }
+
+    public void setSurfaceTexture(SurfaceTexture surfaceTexture) {
+        this.renderSurfaceTexture = surfaceTexture;
     }
 
     public MediaCodecDecoderRenderer(Activity activity, PreferenceConfiguration prefs,
@@ -537,7 +545,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
         LimeLog.info("Configuring with format: "+format);
 
-        videoDecoder.configure(format, renderTarget.getSurface(), null, 0);
+        //videoDecoder.configure(format, renderTarget.getSurface(), null, 0);
+
+        renderSurface = new Surface(this.renderSurfaceTexture);
+        videoDecoder.configure(format, renderSurface, null, 0);
+
+        // this.renderSurfaceTexture
 
         configuredFormat = format;
 
@@ -1248,6 +1261,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             codecRecoveryType.set(CR_RECOVERY_TYPE_NONE);
             codecRecoveryMonitor.notifyAll();
         }
+
+        this.renderSurface.release();
 
         // Post a quit message to the Choreographer looper (if we have one)
         if (choreographerHandler != null) {
