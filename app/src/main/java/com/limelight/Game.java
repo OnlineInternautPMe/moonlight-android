@@ -252,9 +252,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         // Listen for non-touch events on the game surface
         streamView = findViewById(R.id.surfaceView);
-        streamView.setOnGenericMotionListener(this);
-        streamView.setOnKeyListener(this);
         // Commented this because of personal preference
+        // streamView.setOnGenericMotionListener(this);
+        // streamView.setOnKeyListener(this);
         //streamView.setInputCallbacks(this);
 
         // Create the stream copy view
@@ -264,9 +264,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // to work on areas outside of the StreamView itself. We use a separate View
         // for this rather than just handling it at the Activity level, because that
         // allows proper touch splitting, which the OSC relies upon.
-        View backgroundTouchView = findViewById(R.id.backgroundTouchView);
-        backgroundTouchView.setOnTouchListener(this);
+        // View backgroundTouchView = findViewById(R.id.backgroundTouchView);
+        // backgroundTouchView.setOnTouchListener(this);
 
+        /*
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             // Request unbuffered input event dispatching for all input classes we handle here.
             // Without this, input events are buffered to be delivered in lock-step with VBlank,
@@ -286,6 +287,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     InputDevice.SOURCE_CLASS_TRACKBALL // Mice (pointer capture)
             );
         }
+        */
 
         notificationOverlayView = findViewById(R.id.notificationOverlay);
 
@@ -293,6 +295,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         inputCaptureProvider = InputCaptureManager.getInputCaptureProvider(this, this);
 
+        /*
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             streamView.setOnCapturedPointerListener(new View.OnCapturedPointerListener() {
                 @Override
@@ -301,6 +304,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 }
             });
         }
+        */
 
         // Warn the user if they're on a metered connection
         ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -512,6 +516,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         inputManager.registerInputDeviceListener(keyboardTranslator, null);
 
         // Initialize touch contexts
+        /*
         for (int i = 0; i < touchContextMap.length; i++) {
             if (!prefConfig.touchscreenTrackpad) {
                 touchContextMap[i] = new AbsoluteTouchContext(conn, i, streamView);
@@ -522,6 +527,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         streamView, prefConfig);
             }
         }
+        */
 
         if (prefConfig.onscreenController) {
             // create virtual onscreen controller
@@ -550,6 +556,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             return;
         }
 
+        // Manage SurfaceView rendering events
         streamView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override
             public void onSurfaceTextureAvailable(SurfaceTexture surfaceTexture, int i, int i1) {
@@ -657,6 +664,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
                 Window window = Game.this.getWindow();
 
+                /*
+                If your TextureView is inside a scrolling list (like a RecyclerView) or a moving container, the locationInWindow can change between the moment you calculate the Rect and the moment the GPU actually performs the copy.
+                To make it bulletproof:
+                Check for isAttachedToWindow(): Always ensure the view is still attached before calling PixelCopy.
+                Use getGlobalVisibleRect: If the view is partially off-screen, getGlobalVisibleRect is safer than getLocationInWindow as it accounts for clipping by the parent.
+                 */
                 PixelCopy.request(window, srcRect, reusableBitmap, (copyResult) -> {
                     if (copyResult == PixelCopy.SUCCESS) {
                         streamCopyView.post(() -> streamCopyView.setImageBitmap(reusableBitmap));
@@ -2250,8 +2263,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public boolean onGenericMotionEvent(MotionEvent event) {
-        return handleMotionEvent(null, event) || super.onGenericMotionEvent(event);
-
+        //return handleMotionEvent(null, event) || super.onGenericMotionEvent(event);
+        return false;
     }
 
     private void updateMousePosition(View touchedView, MotionEvent event) {
@@ -2309,7 +2322,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public boolean onGenericMotion(View view, MotionEvent event) {
-        return handleMotionEvent(view, event);
+        // return handleMotionEvent(view, event);
+        return false;
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -2322,7 +2336,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             view.requestUnbufferedDispatch(event);
         }
 
-        return handleMotionEvent(view, event);
+        // return handleMotionEvent(view, event);
+        return false;
     }
 
     @Override
