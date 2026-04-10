@@ -50,6 +50,7 @@ import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.graphics.Bitmap;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
@@ -60,6 +61,7 @@ import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.IBinder;
 import android.util.Rational;
 import android.view.Display;
@@ -67,6 +69,7 @@ import android.view.InputDevice;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.PixelCopy;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.TextureView;
@@ -78,6 +81,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.view.inputmethod.InputMethodManager;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -88,6 +92,7 @@ import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 
 public class Game extends Activity implements SurfaceHolder.Callback,
@@ -139,6 +144,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private boolean waitingForAllModifiersUp = false;
     private int specialKeyCode = KeyEvent.KEYCODE_UNKNOWN;
     //private StreamView streamView;
+    private ImageView streamCopyView;
     private TextureView streamView;
     private long lastAbsTouchUpTime = 0;
     private long lastAbsTouchDownTime = 0;
@@ -172,6 +178,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             connectedToUsbDriverService = false;
         }
     };
+
+    // Needed to manage copy to renderCopyView
+    private HandlerThread copyThread;
+    private Handler copyHandler;
+    private Bitmap reusableBitmap;
+    private AtomicBoolean isCopying = new AtomicBoolean(false);
 
     public static final String EXTRA_HOST = "Host";
     public static final String EXTRA_PORT = "Port";
@@ -244,6 +256,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         streamView.setOnKeyListener(this);
         // Commented this because of personal preference
         //streamView.setInputCallbacks(this);
+
+        // Create the stream copy view
+        streamCopyView = findViewById(R.id.imageView);
 
         // Listen for touch events on the background touch view to enable trackpad mode
         // to work on areas outside of the StreamView itself. We use a separate View
@@ -581,6 +596,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 if (!attemptedConnection) {
                     attemptedConnection = true;
 
+                    // Initialize the background thread for PixelCopy
+                    copyThread = new HandlerThread("PixelCopyManager");
+                    copyThread.start();
+                    copyHandler = new Handler(copyThread.getLooper());
+
                     // Update GameManager state to indicate we're "loading" while connecting
                     UiHelper.notifyStreamConnecting(Game.this);
 
@@ -609,16 +629,40 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     // Let the decoder know immediately that the surface is gone
                     decoderRenderer.prepareForStop();
 
+                    copyThread.quitSafely();
+                    if (reusableBitmap != null) reusableBitmap.recycle();
+
                     if (connected) {
                         stopConnection();
                     }
                 }
-                return false;
+                return true;
             }
 
             @Override
             public void onSurfaceTextureUpdated(SurfaceTexture surfaceTexture) {
-                LimeLog.info("Surface Texture updated");
+                //LimeLog.info("Surface Texture updated");
+                if (isCopying.get()) return; // Prevent overlapping requests if copy takes longer than frame rate
+                isCopying.set(true);
+
+                if (reusableBitmap == null) {
+                    reusableBitmap = Bitmap.createBitmap(streamView.getWidth(), streamView.getHeight(), Bitmap.Config.ARGB_8888);
+                }
+
+                int[] location = new int[2];
+                streamView.getLocationInWindow(location);
+                Rect srcRect = new Rect(location[0], location[1],
+                        location[0] + streamView.getWidth(),
+                        location[1] + streamView.getHeight());
+
+                Window window = Game.this.getWindow();
+
+                PixelCopy.request(window, srcRect, reusableBitmap, (copyResult) -> {
+                    if (copyResult == PixelCopy.SUCCESS) {
+                        streamCopyView.post(() -> streamCopyView.setImageBitmap(reusableBitmap));
+                    }
+                    isCopying.set(false);
+                }, copyHandler);
             }
         });
 
