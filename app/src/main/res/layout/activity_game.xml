@@ -10,41 +10,46 @@
         android:layout_height="match_parent"
         android:layout_gravity="center" />
 
-    <ImageView
-        android:id="@+id/imageView"
-        android:layout_width="640px"
-        android:layout_height="480px"
-        android:layout_gravity="bottom"
-        android:focusable="true"
-        android:focusableInTouchMode="true"
-        android:focusedByDefault="true"
-        android:defaultFocusHighlightEnabled="false">
-        <requestFocus />
-    </ImageView>
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginTop="40px"
+        android:orientation="horizontal">
 
-    <!--<com.limelight.ui.StreamView-->
-    <TextureView android:id="@+id/surfaceView"
-        android:layout_width="640px"
-        android:layout_height="480px"
-        android:layout_gravity="top"
-        android:focusable="true"
-        android:focusableInTouchMode="true"
-        android:focusedByDefault="true"
-        android:defaultFocusHighlightEnabled="false">
-        <requestFocus />
-    </TextureView>
-    <!--</com.limelight.ui.StreamView>-->
+        <!--<com.limelight.ui.StreamView-->
+        <TextureView
+            android:id="@+id/surfaceView"
+            android:layout_width="800px"
+            android:layout_height="600px"
+            android:layout_marginEnd="60px"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:focusedByDefault="true"
+            android:defaultFocusHighlightEnabled="false">
+            <requestFocus />
+        </TextureView>
+        <!--</com.limelight.ui.StreamView>-->
+
+        <ImageView
+            android:id="@+id/imageView"
+            android:layout_width="800px"
+            android:layout_height="600px"
+            android:layout_marginStart="60px"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:focusedByDefault="true"
+            android:defaultFocusHighlightEnabled="false" />
+    </LinearLayout>
 
     <TextView
         android:id="@+id/performanceOverlay"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginLeft="10dp"
         android:layout_marginStart="10dp"
         android:layout_marginTop="10dp"
-        android:layout_gravity="left"
+        android:layout_gravity="start|top"
         android:textAppearance="?android:attr/textAppearanceSmall"
-        android:gravity="left"
         android:background="#80000000"
         android:preferKeepClear="true"
         android:visibility="gone" />
@@ -53,12 +58,10 @@
         android:id="@+id/notificationOverlay"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginRight="10dp"
         android:layout_marginEnd="10dp"
         android:layout_marginTop="10dp"
-        android:layout_gravity="right"
+        android:layout_gravity="end|top"
         android:textAppearance="?android:attr/textAppearanceLarge"
-        android:gravity="right"
         android:background="#80000000"
         android:preferKeepClear="true"
         android:visibility="gone" />
